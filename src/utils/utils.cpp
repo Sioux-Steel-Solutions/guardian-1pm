@@ -1,20 +1,20 @@
 // utils.cpp
 #include "utils.h"
-#include "secrets.h" 
+#include "secrets.h"
 #include <Arduino.h>
-#include <EEPROM.h>
-#include <ESP8266WiFi.h>
+#include <Preferences.h>
+#include <WiFi.h>
 #include <WiFiClient.h>
 #include <PubSubClient.h>
-#include <string.h> 
+#include <string.h>
 #include <stdlib.h>
 #include <cmath>
 #include <ArduinoJson.h>
 
 // Global Variables
 Config storedConfig;
-#define RELAY_CONTROL 15
 bool relayState = false; // true = ON, false = OFF
+Preferences preferences;
 
 
 String getPubTopic(){
@@ -70,7 +70,7 @@ uint32_t calculateChecksum(const uint8_t* data, size_t length) {
   return checksum;
 }
 
-// Save User and WiFi Credentials to EEPROM
+// Save User and WiFi Credentials to Preferences (NVS)
 bool saveUserAndWifiCreds(const String& ssid, const String& password, const String& uuid, const String& deviceId) {
   // Clear the Config struct
   memset(&storedConfig, 0, sizeof(Config));
@@ -110,67 +110,57 @@ bool saveUserAndWifiCreds(const String& ssid, const String& password, const Stri
 
   Serial.println("[SUCCESS] All fields verified successfully.");
 
-  // Calculate checksum excluding the checksum field itself
-  storedConfig.checksum = 0;
-  storedConfig.checksum = calculateChecksum(reinterpret_cast<uint8_t*>(&storedConfig), sizeof(Config) - sizeof(uint32_t));
+  // Save to Preferences (NVS) - more reliable than EEPROM
+  preferences.putString("ssid", ssid);
+  preferences.putString("password", password);
+  preferences.putString("uuid", uuid);
+  preferences.putString("deviceId", deviceId);
+  preferences.putBool("configured", true);
 
-  // Write the Config struct to EEPROM
-  for (size_t i = 0; i < sizeof(Config); ++i) {
-      EEPROM.write(i, *((uint8_t*)&storedConfig + i));
-  }
-
-  // Commit changes to EEPROM
-  if (EEPROM.commit()) {
-      Serial.println("[EEPROM] Configuration saved successfully.");
-      return true;
-  } else {
-      Serial.println("[EEPROM] Failed to commit changes.");
-      return false;
-  }
+  Serial.println("[NVS] Configuration saved successfully.");
+  return true;
 }
 
-// Check for WiFi and User Configuration in EEPROM
+// Check for WiFi and User Configuration in Preferences (NVS)
 bool checkForWifiAndUser() {
-  // Read the Config struct from EEPROM
-  for (size_t i = 0; i < sizeof(Config); ++i) {
-    *((uint8_t*)&storedConfig + i) = EEPROM.read(i);
-  }
-
-  // Ensure null-termination for UUID and DeviceID
-  storedConfig.uuid[UUID_LENGTH - 1] = '\0';
-  storedConfig.deviceId[DEVICEID_LENGTH - 1] = '\0';
-  storedConfig.ssid[MAX_SSID_LENGTH - 1] = '\0';
-  storedConfig.password[MAX_PASSWORD_LENGTH - 1] = '\0';
-
-  // Calculate checksum of the read data
-  uint32_t calculatedChecksum = calculateChecksum(reinterpret_cast<uint8_t*>(&storedConfig), sizeof(Config) - sizeof(uint32_t));
-
-  // Verify checksum
-  if (storedConfig.checksum == calculatedChecksum) {
-    // Check if all required fields are non-empty
-    if (strlen(storedConfig.ssid) == 0 || strlen(storedConfig.password) == 0 ||
-      strlen(storedConfig.uuid) == 0 || strlen(storedConfig.deviceId) == 0) {
-      Serial.println("[EEPROM] Configuration found, but one or more fields are empty.");
-      doesUserExist = false;
-      return false;
-    }
-
-    Serial.println("[EEPROM] Valid configuration found.");
-    Serial.printf("SSID: %s\n", storedConfig.ssid);
-    Serial.printf("UUID: %s, Length: %d\n", storedConfig.uuid, strlen(storedConfig.uuid));
-    Serial.printf("DeviceID: %s, Length: %d\n", storedConfig.deviceId, strlen(storedConfig.deviceId));
-
-    doesUserExist = true;
-    return true;
-  } else {
-    Serial.println("[EEPROM] Invalid or no configuration found.");
+  // Check if device has been configured
+  if (!preferences.getBool("configured", false)) {
+    Serial.println("[NVS] No configuration found.");
     doesUserExist = false;
     return false;
   }
+
+  // Read configuration from Preferences
+  String ssid = preferences.getString("ssid", "");
+  String password = preferences.getString("password", "");
+  String uuid = preferences.getString("uuid", "");
+  String deviceId = preferences.getString("deviceId", "");
+
+  // Check if all required fields are non-empty
+  if (ssid.isEmpty() || password.isEmpty() || uuid.isEmpty() || deviceId.isEmpty()) {
+    Serial.println("[NVS] Configuration found, but one or more fields are empty.");
+    doesUserExist = false;
+    return false;
+  }
+
+  // Store in global config struct
+  memset(&storedConfig, 0, sizeof(Config));
+  ssid.toCharArray(storedConfig.ssid, MAX_SSID_LENGTH);
+  password.toCharArray(storedConfig.password, MAX_PASSWORD_LENGTH);
+  uuid.toCharArray(storedConfig.uuid, UUID_LENGTH);
+  deviceId.toCharArray(storedConfig.deviceId, DEVICEID_LENGTH);
+
+  Serial.println("[NVS] Valid configuration found.");
+  Serial.printf("SSID: %s\n", storedConfig.ssid);
+  Serial.printf("UUID: %s, Length: %d\n", storedConfig.uuid, strlen(storedConfig.uuid));
+  Serial.printf("DeviceID: %s, Length: %d\n", storedConfig.deviceId, strlen(storedConfig.deviceId));
+
+  doesUserExist = true;
+  return true;
 }
 
 // Send HTTP Response with CORS Headers
-void sendResponse(ESP8266WebServer &server, int statusCode, const String &content) {
+void sendResponse(WebServer &server, int statusCode, const String &content) {
 // Debug output
 Serial.printf("[DEBUG] Sending response with status code %d, content: %s\n", statusCode, content.c_str());
 
@@ -232,14 +222,10 @@ bool connectToWiFi(const String& ssid, const String& password) {
   }
 }
 
-// Clear EEPROM (Use with Caution)
+// Clear NVS Storage (Use with Caution)
 void clearEEPROM() {
-  EEPROM.begin(512);
-  for (int i = 0; i < 512; i++) {
-      EEPROM.write(i, 0xFF);
-  }
-  EEPROM.commit();
-  Serial.println("EEPROM cleared.");
+  preferences.clear(); // Clear all keys in the "guardian" namespace
+  Serial.println("NVS storage cleared.");
   ESP.restart();
 }
 
@@ -348,62 +334,20 @@ void publishMessage(const char* topic, const char* message) {
 }
 
 String getUserId() {
-  // Temporary storage for the Config struct
-  Config tempConfig;
-
-  // Read data from EEPROM into tempConfig
-  for (size_t i = 0; i < sizeof(Config); ++i) {
-      *((uint8_t*)&tempConfig + i) = EEPROM.read(i);
+  String uuid = preferences.getString("uuid", "");
+  if (uuid.isEmpty()) {
+    Serial.println("[NVS] UUID field is empty.");
   }
-
-  // Ensure null-termination for UUID
-  tempConfig.uuid[UUID_LENGTH - 1] = '\0';
-
-  // Calculate checksum
-  uint32_t calculatedChecksum = calculateChecksum(reinterpret_cast<uint8_t*>(&tempConfig), sizeof(Config) - sizeof(uint32_t));
-
-  // Verify checksum
-  if (tempConfig.checksum == calculatedChecksum) {
-    if (strlen(tempConfig.uuid) == 0) {
-        Serial.println("[EEPROM] UUID field is empty.");
-        return String(""); // Return empty string if UUID is empty
-    }
-
-    return String(tempConfig.uuid);
-  }
-
-  Serial.println("[EEPROM] Invalid configuration or checksum mismatch while retrieving UUID.");
-  return String(""); // Return empty string if checksum fails
+  return uuid;
 }
 
 
 String getDeviceId() {
-  // Temporary storage for the Config struct
-  Config tempConfig;
-
-  // Read data from EEPROM into tempConfig
-  for (size_t i = 0; i < sizeof(Config); ++i) {
-    *((uint8_t*)&tempConfig + i) = EEPROM.read(i);
+  String deviceId = preferences.getString("deviceId", "");
+  if (deviceId.isEmpty()) {
+    Serial.println("[NVS] DeviceID field is empty.");
   }
-
-  // Ensure null-termination for DeviceID
-  tempConfig.deviceId[DEVICEID_LENGTH - 1] = '\0';
-
-  // Calculate checksum
-  uint32_t calculatedChecksum = calculateChecksum(reinterpret_cast<uint8_t*>(&tempConfig), sizeof(Config) - sizeof(uint32_t));
-
-  // Verify checksum
-  if (tempConfig.checksum == calculatedChecksum) {
-    if (strlen(tempConfig.deviceId) == 0) {
-      Serial.println("[EEPROM] DeviceID field is empty.");
-      return String(""); 
-    }
-
-    return String(tempConfig.deviceId);
-  }
-
-  Serial.println("[EEPROM] Invalid configuration or checksum mismatch while retrieving DeviceID.");
-  return String(""); 
+  return deviceId;
 }
 
 void initRelay() {

@@ -2,8 +2,9 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#include <ESP8266WebServer.h>
+#include <WebServer.h>
 #include <PubSubClient.h>
+#include <Preferences.h>
 
 // Constants
 #define MAX_SSID_LENGTH     32
@@ -11,8 +12,13 @@
 #define UUID_LENGTH         37
 #define DEVICEID_LENGTH     37
 
-// Pin Definitions
-#define SHELLY_BUILTIN_LED 0
+// Gen 2 ESP32-C3 Pin Definitions
+#define STATUS_LED_BLUE 1      // Blue LED control (Active LOW)
+#define RELAY_CONTROL 5        // Relay control via optocoupler
+#define SWITCH_DETECTION 4     // AC switch detection input (Active LOW when switch on)
+
+// Legacy compatibility
+#define SHELLY_BUILTIN_LED STATUS_LED_BLUE
 
 // Configuration Structure
 struct Config {
@@ -26,6 +32,8 @@ struct Config {
 // External Variables
 extern Config storedConfig;
 extern PubSubClient mqttClient;
+extern Preferences preferences;
+extern bool relayState;
 
 // MQTT Topics
 extern const char* mqtt_publish_topic;
@@ -34,7 +42,7 @@ extern const char* mqtt_subscribe_topic;
 extern bool doesUserExist;
 
 // Function Prototypes
-void sendResponse(ESP8266WebServer &server, int statusCode, const String &content);
+void sendResponse(WebServer &server, int statusCode, const String &content);
 void flashLED();
 bool connectToWiFi(const String& ssid, const String& password);
 bool saveUserAndWifiCreds(const String& ssid, const String& password, const String& uuid, const String& deviceId);

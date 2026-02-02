@@ -1,7 +1,7 @@
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <EEPROM.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Preferences.h>
 #include <PubSubClient.h>
 #include <Wire.h>
 #include <time.h>
@@ -11,7 +11,7 @@
 #include "api/api.h"
 
 // Web server on port 80
-ESP8266WebServer server(80);
+WebServer server(80);
 
 // Timer variables
 unsigned long lastPublishTime = 0;
@@ -25,11 +25,14 @@ const unsigned long wifiRetryInterval = 30000;
 
 
 void startAccessPoint() {
+  Serial.println("[AP MODE] Starting access point...");
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP("Guardian_GMS_Relay", "");
-  Serial.print("Access point IP: ");
+  Serial.println("[AP MODE] ✓ Access point started");
+  Serial.print("[AP MODE] SSID: Guardian_GMS_Relay (no password)");
+  Serial.print("[AP MODE] IP address: ");
   Serial.println(WiFi.softAPIP());
-  digitalWrite(SHELLY_BUILTIN_LED, LOW);
+  digitalWrite(STATUS_LED_BLUE, LOW); // LED on (active LOW)
 }
 
 void synchronizeTime() {
@@ -49,51 +52,93 @@ void synchronizeTime() {
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) { ; }
-  Serial.println("\nFirmware Started");
-  
+  delay(1000); // Give serial time to initialize on native USB
+  Serial.println("\n\n===========================================");
+  Serial.println("Guardian 1PM - Gen 2 ESP32-C3 Firmware");
+  Serial.println("===========================================");
+  Serial.println("Initializing...");
 
-  EEPROM.begin(512);
 
+  // Initialize Preferences (replaces EEPROM)
+  Serial.println("[INIT] Opening NVS storage...");
+  preferences.begin("guardian", false); // namespace "guardian", read-write mode
+  Serial.println("[INIT] NVS storage ready");
 
-  pinMode(SHELLY_BUILTIN_LED, OUTPUT);
-  digitalWrite(SHELLY_BUILTIN_LED, HIGH); 
+  Serial.println("[INIT] Configuring GPIO pins...");
+  pinMode(STATUS_LED_BLUE, OUTPUT);
+  digitalWrite(STATUS_LED_BLUE, HIGH); // LED off (active LOW)
+  Serial.print("[INIT] Blue LED (GPIO");
+  Serial.print(STATUS_LED_BLUE);
+  Serial.println(") configured - OFF");
+
   initRelay();
+  Serial.print("[INIT] Relay (GPIO");
+  Serial.print(RELAY_CONTROL);
+  Serial.println(") configured - OFF");
 
 
 
+  Serial.println("\n[WIFI] Checking for stored credentials...");
   if (checkForWifiAndUser()) {
+      Serial.println("[WIFI] Credentials found! Attempting connection...");
       if (connectToWiFi(String(storedConfig.ssid), String(storedConfig.password))) {
-          Serial.println("Connected to WiFi successfully.");
-          digitalWrite(SHELLY_BUILTIN_LED, HIGH);
+          Serial.println("[WIFI] ✓ Connected to WiFi successfully.");
+          digitalWrite(STATUS_LED_BLUE, HIGH); // LED off
       } else {
-          Serial.println("WiFi connection failed, starting Access Point...");
+          Serial.println("[WIFI] ✗ WiFi connection failed, starting Access Point...");
           startAccessPoint();
       }
   } else {
-      Serial.println("No Credentials Found, Starting Access Point...");
-      startAccessPoint();
-  }
+      Serial.println("[WIFI] No credentials found - using hardcoded WiFi for testing...");
 
-  if (WiFi.status() == WL_CONNECTED) {
-      synchronizeTime();
-  } else {
-      Serial.println("WiFi not connected. Unable to synchronize time.");
-  }
+      // Hardcoded WiFi credentials for testing
+      String testSSID = "Sioux Steel Internal";
+      String testPassword = "a00b00c00d00e00f00a00b00cc";
+      String testUserId = "test-user-uuid";
+      String testDeviceId = "test-device-uuid";
 
-  setupApiRoutes(server);
-  server.begin();
-  Serial.println("Web Server Started");
-
-  if (doesUserExist && WiFi.status() == WL_CONNECTED) {
-      if (connectToMQTT()) {
-          Serial.println("MQTT Connected Successfully.");
+      Serial.println("[WIFI] Saving hardcoded credentials to NVS...");
+      if (saveUserAndWifiCreds(testSSID, testPassword, testUserId, testDeviceId)) {
+          Serial.println("[WIFI] ✓ Credentials saved, attempting connection...");
+          if (connectToWiFi(testSSID, testPassword)) {
+              Serial.println("[WIFI] ✓ Connected successfully!");
+              digitalWrite(STATUS_LED_BLUE, HIGH); // LED off
+          } else {
+              Serial.println("[WIFI] ✗ Connection failed");
+              startAccessPoint();
+          }
       } else {
-          Serial.println("Failed to Connect to MQTT Broker.");
+          Serial.println("[WIFI] ✗ Failed to save credentials");
+          startAccessPoint();
       }
   }
 
-  // Initialize I²C
+  if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("[TIME] Synchronizing with NTP...");
+      synchronizeTime();
+  } else {
+      Serial.println("[TIME] Skipping - WiFi not connected");
+  }
+
+  Serial.println("[WEB] Starting web server on port 80...");
+  setupApiRoutes(server);
+  server.begin();
+  Serial.println("[WEB] ✓ Web server started");
+
+  if (doesUserExist && WiFi.status() == WL_CONNECTED) {
+      Serial.println("[MQTT] Connecting to broker...");
+      if (connectToMQTT()) {
+          Serial.println("[MQTT] ✓ Connected successfully");
+      } else {
+          Serial.println("[MQTT] ✗ Connection failed");
+      }
+  } else {
+      Serial.println("[MQTT] Skipping - no credentials or WiFi");
+  }
+
+  Serial.println("\n===========================================");
+  Serial.println("SETUP COMPLETE - Entering main loop");
+  Serial.println("===========================================\n");
 }
 
 
@@ -102,7 +147,8 @@ void loop() {
   server.handleClient();
   unsigned long currentMillis = millis();
 
-  // WiFi Reconnect
+  // WiFi Reconnect - COMMENTED OUT FOR TESTING
+  /*
   if (doesUserExist && (WiFi.status() != WL_CONNECTED)) {
       if (currentMillis - lastWifiRetryAttempt > wifiRetryInterval) {
           lastWifiRetryAttempt = currentMillis;
@@ -124,8 +170,10 @@ void loop() {
           }
       }
   }
+  */
 
-  // MQTT Reconnect
+  // MQTT Reconnect - COMMENTED OUT FOR TESTING
+  /*
   if (doesUserExist && (WiFi.status() == WL_CONNECTED)) {
       if (!mqttClient.connected()) {
           if (currentMillis - lastReconnectAttempt > reconnectInterval) {
@@ -138,16 +186,40 @@ void loop() {
               }
           }
       }
+  */
+
+  // Core MQTT and relay state management - ACTIVE
+  if (doesUserExist && (WiFi.status() == WL_CONNECTED)) {
+      // Process incoming MQTT messages
       mqttClient.loop();
 
-        static unsigned long lastHeartbeat = 0;
-        if (currentMillis - lastHeartbeat >= 60000) {  // 60000 ms = 1 minute
-        lastHeartbeat = currentMillis;
-        publishRelayStateupdate("heartbeat");
-    }
-      delay(100);
+      // Heartbeat - publish relay state every 60 seconds
+      static unsigned long lastHeartbeat = 0;
+      if (currentMillis - lastHeartbeat >= 60000) {  // 60000 ms = 1 minute
+          lastHeartbeat = currentMillis;
+          Serial.println("[HEARTBEAT] Publishing relay state...");
+          publishRelayStateupdate("heartbeat");
+          Serial.print("[RELAY STATE] Current: ");
+          Serial.println(relayState ? "ON" : "OFF");
+      }
 
-    
+      // Status debug every 10 seconds
+      static unsigned long lastStatusPrint = 0;
+      if (currentMillis - lastStatusPrint >= 10000) {
+          lastStatusPrint = currentMillis;
+          Serial.println("=== STATUS ===");
+          Serial.print("WiFi: ");
+          Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+          Serial.print("MQTT: ");
+          Serial.println(mqttClient.connected() ? "Connected" : "Disconnected");
+          Serial.print("Relay: ");
+          Serial.println(relayState ? "ON" : "OFF");
+          Serial.print("GPIO5 (Relay): ");
+          Serial.println(digitalRead(RELAY_CONTROL) ? "HIGH" : "LOW");
+          Serial.println("==============");
+      }
+
+      delay(100);
   }
-  
+
 }
