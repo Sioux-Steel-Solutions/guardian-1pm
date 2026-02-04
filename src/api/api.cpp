@@ -16,12 +16,12 @@ void setupApiRoutes(WebServer &server) {
     });
 
     server.on("/led/on", HTTP_GET, [&server]() {
-        digitalWrite(SHELLY_BUILTIN_LED, LOW);
+        digitalWrite(STATUS_LED_BLUE, LOW);
         sendResponse(server, 200, "{\"status\":\"LED turned on\"}");
     });
 
     server.on("/led/off", HTTP_GET, [&server]() {
-        digitalWrite(SHELLY_BUILTIN_LED, HIGH);
+        digitalWrite(STATUS_LED_BLUE, HIGH);
         sendResponse(server, 200, "{\"status\":\"LED turned off\"}");
     });
 

@@ -175,9 +175,9 @@ server.send(statusCode, "application/json", content);
 
 // Flash LED (Example Function)
 void flashLED() {
-  digitalWrite(SHELLY_BUILTIN_LED, LOW);  // Turn LED on
+  digitalWrite(STATUS_LED_BLUE, LOW);  // Turn LED on
   delay(500);
-  digitalWrite(SHELLY_BUILTIN_LED, HIGH); // Turn LED off
+  digitalWrite(STATUS_LED_BLUE, HIGH); // Turn LED off
   delay(500);
 }
 
@@ -186,7 +186,7 @@ bool connectToWiFi(const String& ssid, const String& password) {
   Serial.println("Attempting to connect to WiFi...");
 
   // Turn on the LED (solid, indicating connection attempt)
-  digitalWrite(SHELLY_BUILTIN_LED, LOW);
+  digitalWrite(STATUS_LED_BLUE, LOW);
 
   // Disconnect any previous connection
   WiFi.disconnect();
@@ -209,7 +209,7 @@ bool connectToWiFi(const String& ssid, const String& password) {
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
     Serial.printf("Signal Strength: %d dBm\n", WiFi.RSSI());
-    digitalWrite(SHELLY_BUILTIN_LED, HIGH);
+    digitalWrite(STATUS_LED_BLUE, HIGH);
 
     doesUserExist = true;
     return true;

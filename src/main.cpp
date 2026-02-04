@@ -89,28 +89,8 @@ void setup() {
           startAccessPoint();
       }
   } else {
-      Serial.println("[WIFI] No credentials found - using hardcoded WiFi for testing...");
-
-      // Hardcoded WiFi credentials for testing
-      String testSSID = "Sioux Steel Internal";
-      String testPassword = "a00b00c00d00e00f00a00b00cc";
-      String testUserId = "test-user-uuid";
-      String testDeviceId = "test-device-uuid";
-
-      Serial.println("[WIFI] Saving hardcoded credentials to NVS...");
-      if (saveUserAndWifiCreds(testSSID, testPassword, testUserId, testDeviceId)) {
-          Serial.println("[WIFI] ✓ Credentials saved, attempting connection...");
-          if (connectToWiFi(testSSID, testPassword)) {
-              Serial.println("[WIFI] ✓ Connected successfully!");
-              digitalWrite(STATUS_LED_BLUE, HIGH); // LED off
-          } else {
-              Serial.println("[WIFI] ✗ Connection failed");
-              startAccessPoint();
-          }
-      } else {
-          Serial.println("[WIFI] ✗ Failed to save credentials");
-          startAccessPoint();
-      }
+      Serial.println("[WIFI] No credentials found, starting Access Point...");
+      startAccessPoint();
   }
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -147,15 +127,14 @@ void loop() {
   server.handleClient();
   unsigned long currentMillis = millis();
 
-  // WiFi Reconnect - COMMENTED OUT FOR TESTING
-  /*
+  // WiFi Reconnect
   if (doesUserExist && (WiFi.status() != WL_CONNECTED)) {
       if (currentMillis - lastWifiRetryAttempt > wifiRetryInterval) {
           lastWifiRetryAttempt = currentMillis;
           Serial.println("Attempting to reconnect to WiFi...");
           if (connectToWiFi(String(storedConfig.ssid), String(storedConfig.password))) {
               Serial.println("Reconnected to WiFi successfully.");
-              // digitalWrite(SHELLY_BUILTIN_LED, HIGH);
+              digitalWrite(STATUS_LED_BLUE, HIGH);
               synchronizeTime();
 
               if (!mqttClient.connected()) {
@@ -170,10 +149,8 @@ void loop() {
           }
       }
   }
-  */
 
-  // MQTT Reconnect - COMMENTED OUT FOR TESTING
-  /*
+  // MQTT Reconnect
   if (doesUserExist && (WiFi.status() == WL_CONNECTED)) {
       if (!mqttClient.connected()) {
           if (currentMillis - lastReconnectAttempt > reconnectInterval) {
@@ -186,11 +163,6 @@ void loop() {
               }
           }
       }
-  */
-
-  // Core MQTT and relay state management - ACTIVE
-  if (doesUserExist && (WiFi.status() == WL_CONNECTED)) {
-      // Process incoming MQTT messages
       mqttClient.loop();
 
       // Heartbeat - publish relay state every 60 seconds
@@ -201,22 +173,6 @@ void loop() {
           publishRelayStateupdate("heartbeat");
           Serial.print("[RELAY STATE] Current: ");
           Serial.println(relayState ? "ON" : "OFF");
-      }
-
-      // Status debug every 10 seconds
-      static unsigned long lastStatusPrint = 0;
-      if (currentMillis - lastStatusPrint >= 10000) {
-          lastStatusPrint = currentMillis;
-          Serial.println("=== STATUS ===");
-          Serial.print("WiFi: ");
-          Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
-          Serial.print("MQTT: ");
-          Serial.println(mqttClient.connected() ? "Connected" : "Disconnected");
-          Serial.print("Relay: ");
-          Serial.println(relayState ? "ON" : "OFF");
-          Serial.print("GPIO5 (Relay): ");
-          Serial.println(digitalRead(RELAY_CONTROL) ? "HIGH" : "LOW");
-          Serial.println("==============");
       }
 
       delay(100);
